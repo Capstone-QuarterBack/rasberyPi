@@ -29,6 +29,12 @@ class OcppComm:
         
         # 메시지 처리 태스크 시작
         self.message_processor_task = None
+        
+        # 가격 정보 저장
+        self.price_per_wh = 10  # 기본값 10원/Wh로 설정
+        
+        # 트랜잭션 ID 정보 저장
+        self.last_transaction_id = None  # 마지막으로 수신한 트랜잭션 ID
 
     async def connect_websocket(self) -> bool:
         """WebSocket 연결"""
@@ -142,7 +148,7 @@ class OcppComm:
                 await asyncio.wait_for(self.response_event.wait(), timeout=10.0)
                 
                 # "수신완료" 메시지 확인
-                if self.last_response and "수신완료" in str(self.last_response):
+                if self.last_response and "3" in str(self.last_response):
                     print(f"'수신완료' 응답을 받았습니다. 메시지 전송 성공.")
                     return True
                 else:
@@ -171,6 +177,29 @@ class OcppComm:
                 # 응답 저장 및 이벤트 설정
                 self.last_response = response
                 self.response_event.set()
+                
+                # 응답 파싱
+                try:
+                    response_data = json.loads(response)
+                    if len(response_data) >= 3 and response_data[0] == 3:  # 응답 메시지인 경우
+                        payload = response_data[2]  # 응답 페이로드
+                        message_id = response_data[1]  # 메시지 ID
+                        
+                        # pricePermWh 값 추출
+                        if "customData" in payload and "pricePermWh" in payload["customData"]:
+                            self.price_per_wh = payload["customData"]["pricePermWh"]
+                            print(f"가격 정보 업데이트: {self.price_per_wh}원/Wh")
+                        
+                        # Response에서 transactionId 추출 (메시지 ID 형식과 상관없이 추출)
+                        if "customData" in payload and "transactionId" in payload["customData"]:
+                            tx_id = payload["customData"]["transactionId"]
+                            # tx_id가 문자열이 아니면 문자열로 변환 (예: tx-003 대신 단순 숫자인 경우)
+                            if not isinstance(tx_id, str):
+                                tx_id = f"tx-{int(tx_id):03d}"
+                            self.last_transaction_id = tx_id
+                            print(f"트랜잭션 ID 업데이트: {self.last_transaction_id}")
+                except Exception as e:
+                    print(f"응답 파싱 중 오류: {e}")
                 
             except asyncio.CancelledError:
                 print("메시지 수신 태스크가 취소되었습니다.")
